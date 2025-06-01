@@ -1,11 +1,8 @@
 #ifndef FILE_UTILS_H
 #define FILE_UTILS_H
 
-#include <stdio.h>
-#include <sys/types.h>
 #include <sys/stat.h>
 #include <time.h>
-#include <unistd.h>
 
 // 상수 정의
 #define MAX_PATH_LENGTH 4096
