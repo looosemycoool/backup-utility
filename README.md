@@ -355,15 +355,7 @@ tail -f backup.log
 - **모든 함수에 오류 처리** 구현
 - **테스트 케이스** 추가
 
-## 📝 라이선스
 
-MIT License - 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
-
-## 📞 지원
-
-- **이슈 리포트**: [GitHub Issues](https://github.com/yourusername/backup-utility/issues)
-- **기능 제안**: [GitHub Discussions](https://github.com/yourusername/backup-utility/discussions)
-- **보안 문제**: security@yourproject.com
 
 ## 🔄 변경 로그
 
