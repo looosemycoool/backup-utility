@@ -21,7 +21,7 @@ void print_usage(const char *prog) {
     printf("  -r, --recursive             재귀적 처리\n");
     printf("  -v, --verbose               상세 출력\n");
     printf("  -p, --progress              진행률 표시\n");
-    printf("  -c, --compression=TYPE      압축 (none, gzip, zlib, lz4)\n");
+    printf("  -c, --compression=TYPE      압축 (none, gzip, zlib)\n");
     printf("  -m, --mode=MODE             백업 모드 (full, incremental, differential)\n");
     printf("  -x, --exclude=PATTERN       제외 패턴\n");
     printf("  -j, --jobs=N                병렬 처리 스레드 수 (기본: %d)\n", MAX_THREADS);
@@ -47,7 +47,7 @@ void print_version(void) {
     printf("빌드 날짜: %s\n", BUILD_DATE);
     printf("컴파일러: GCC %s\n", __VERSION__);
     printf("최대 병렬 스레드: %d\n", MAX_THREADS);
-    printf("지원 압축: gzip, zlib, lz4\n");
+    printf("지원 압축: gzip, zlib\n");
     printf("버퍼 크기: %d bytes\n", BUFFER_SIZE);
 }
 
@@ -55,7 +55,6 @@ compression_type_t parse_compression_type(const char *str) {
     if (!str || strcmp(str, "none") == 0) return COMPRESS_NONE;
     if (strcmp(str, "gzip") == 0) return COMPRESS_GZIP;
     if (strcmp(str, "zlib") == 0) return COMPRESS_ZLIB;
-    if (strcmp(str, "lz4") == 0) return COMPRESS_LZ4;
     return COMPRESS_NONE;
 }
 
@@ -261,7 +260,8 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     
-    if (parse_options(argc - 1, argv + 1, &g_options) != 0) {
+    // ⭐ 수정: command(argv[1]) 다음부터 전달
+    if (parse_options(argc - 2, argv + 2, &g_options) != 0) {
         return 1;
     }
     
@@ -288,81 +288,31 @@ int main(int argc, char *argv[]) {
     
     // 명령어별 처리
     if (strcmp(command, "backup") == 0) {
-  
-     /* 
-     // === 디버그 정보 추가 ===
-    printf("=== DEBUG INFO ===\n");
-    printf("argc: %d\n", argc);
-    printf("optind: %d\n", optind);
-    for (int i = 0; i < argc; i++) {
-        printf("argv[%d]: '%s'\n", i, argv[i]);
-    }
-    printf("==================\n");
-    */
-    
-    // 옵션 파싱 후 남은 인수 확인
-    int remaining_args = argc - optind - 1;  // -1은 "backup" 명령어 제외
-    printf("remaining_args: %d\n", remaining_args);
-
-    if (remaining_args < 2) {
-        printf("사용법: %s backup [옵션] <소스> <대상>\n", argv[0]);
-        return 1;
-    }
-    
-    // 인덱스 계산 확인
-    printf("source index: %d, dest index: %d\n", optind + 1, optind + 2);
-    
-    // 올바른 인덱싱
-    source = argv[optind + 1];      // 옵션 파싱 후 첫 번째 인수
-    dest = argv[optind + 2];        // 옵션 파싱 후 두 번째 인수
-    
-    printf("source: '%s', dest: '%s'\n", source, dest);
-
-    printf("log_info 호출 전...\n");
-fflush(stdout);
-
-log_info("백업 시작: %s -> %s", source, dest);
-
-printf("log_info 호출 후...\n");
-fflush(stdout);
-
-printf("file_exists 확인 중...\n");
-fflush(stdout);
-
-if (!file_exists(source)) {
-    printf("오류: 소스가 존재하지 않습니다: %s\n", source);
-    result = ERROR_FILE_NOT_FOUND;
-} else {
-    printf("소스 파일 존재 확인됨\n");
-    fflush(stdout);
-    
-    printf("is_directory 확인 중...\n");
-    fflush(stdout);
-    
-    if (is_directory(source)) {
-        printf("디렉토리 백업 로직\n");
-        // 디렉토리 백업 로직...
-    } else {
-        printf("파일 백업 시작...\n");
-        fflush(stdout);
+        // ⭐ 수정: optind는 argv+2 기준이므로 +2 필요
+        int remaining_args = argc - optind - 2;
+        if (remaining_args < 2) {
+            printf("사용법: %s backup [옵션] <소스> <대상>\n", argv[0]);
+            return 1;
+        }
         
-        result = backup_file(source, dest, &g_options);
+        // ⭐ 수정: argv+2 기준 optind이므로 실제로는 +2 필요
+        source = argv[optind + 2];
+        dest = argv[optind + 3];
         
-        printf("backup_file 완료, 결과: %d\n", result);
-        fflush(stdout);
-    }
-}
-
-
-
-
-    log_info("백업 시작: %s -> %s", source, dest);
-
+        // 디버그 정보 (verbose 모드에서만)
+        if (g_options.verbose) {
+            printf("백업 작업: %s -> %s\n", source, dest);
+        }
         
+        // ⭐ 수정: 정상적인 로그 기록 (한 번만)
+        log_info("백업 시작: %s -> %s", source, dest);
+        
+        // 소스 파일/디렉토리 존재 확인
         if (!file_exists(source)) {
             printf("오류: 소스가 존재하지 않습니다: %s\n", source);
             result = ERROR_FILE_NOT_FOUND;
         } else {
+            // 디렉토리 vs 파일 처리
             if (is_directory(source)) {
                 if (!g_options.recursive) {
                     printf("오류: 디렉토리 백업에는 -r 옵션이 필요합니다.\n");
@@ -375,20 +325,21 @@ if (!file_exists(source)) {
             }
         }
         
-        // 백업 후 검증
+        // 백업 후 검증 (옵션이 설정된 경우)
         if (result == SUCCESS && g_options.verify) {
             log_info("백업 검증 중...");
             result = verify_backup_integrity(source, dest, &g_options);
         }
         
     } else if (strcmp(command, "restore") == 0) {
-        if (argc < 4) {
+        int remaining_args = argc - optind - 2;
+        if (remaining_args < 2) {
             printf("사용법: %s restore [옵션] <소스> <대상>\n", argv[0]);
             return 1;
         }
         
-        source = argv[argc - 2];
-        dest = argv[argc - 1];
+        source = argv[optind + 2];
+        dest = argv[optind + 3];
         
         log_info("복원 시작: %s -> %s", source, dest);
         
@@ -409,21 +360,23 @@ if (!file_exists(source)) {
         }
         
     } else if (strcmp(command, "verify") == 0) {
-        if (argc < 3) {
+        int remaining_args = argc - optind - 2;
+        if (remaining_args < 1) {
             printf("사용법: %s verify [옵션] <백업경로>\n", argv[0]);
             return 1;
         }
         
-        source = argv[argc - 1];
+        source = argv[optind + 2];
         result = verify_backup(source, &g_options);
         
     } else if (strcmp(command, "list") == 0) {
-        if (argc < 3) {
+        int remaining_args = argc - optind - 2;
+        if (remaining_args < 1) {
             printf("사용법: %s list [옵션] <백업경로>\n", argv[0]);
             return 1;
         }
         
-        source = argv[argc - 1];
+        source = argv[optind + 2];
         result = list_backup_contents(source, &g_options);
         
     } else {
