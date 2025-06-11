@@ -5,6 +5,233 @@ backup_options_t g_options = {0};
 backup_stats_t g_stats = {0};
 progress_info_t g_progress = {0};
 
+// 누락된 뮤텍스 전역 변수들
+pthread_mutex_t g_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// 누락된 함수들 구현
+void close_logging(void) {
+    cleanup_logging();
+}
+
+int list_backup_contents(const char *backup_path, const backup_options_t *opts) {
+    printf("백업 내용 목록: %s\n", backup_path);
+    
+    if (!file_exists(backup_path)) {
+        printf("오류: 백업 경로가 존재하지 않습니다: %s\n", backup_path);
+        return ERROR_FILE_NOT_FOUND;
+    }
+    
+    if (is_directory(backup_path)) {
+        // 디렉토리 백업 내용 목록
+        printf("\n=== 디렉토리 백업 내용 ===\n");
+        
+        DIR *dir = opendir(backup_path);
+        if (!dir) {
+            printf("오류: 디렉토리를 열 수 없습니다: %s\n", backup_path);
+            return ERROR_FILE_OPEN;
+        }
+        
+        struct dirent *entry;
+        int file_count = 0, dir_count = 0;
+        size_t total_size = 0;
+        
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+            
+            char full_path[MAX_PATH];
+            snprintf(full_path, sizeof(full_path), "%s/%s", backup_path, entry->d_name);
+            
+            struct stat st;
+            if (stat(full_path, &st) == 0) {
+                if (S_ISDIR(st.st_mode)) {
+                    printf("📁 %s/\n", entry->d_name);
+                    dir_count++;
+                } else if (S_ISREG(st.st_mode)) {
+                    printf("📄 %s (%ld bytes)\n", entry->d_name, st.st_size);
+                    file_count++;
+                    total_size += st.st_size;
+                }
+            }
+        }
+        closedir(dir);
+        
+        printf("\n요약: %d개 파일, %d개 디렉토리, 총 크기 %zu bytes\n", 
+               file_count, dir_count, total_size);
+        
+    } else {
+        // 단일 파일 백업 정보
+        printf("\n=== 파일 백업 정보 ===\n");
+        
+        struct stat st;
+        if (stat(backup_path, &st) == 0) {
+            printf("파일명: %s\n", backup_path);
+            printf("크기: %ld bytes\n", st.st_size);
+            printf("수정 시간: %s", ctime(&st.st_mtime));
+            
+            // 압축 정보
+            compression_type_t comp_type = get_compression_type(backup_path);
+            if (comp_type != COMPRESS_NONE) {
+                printf("압축 형식: %s\n", 
+                       comp_type == COMPRESS_GZIP ? "gzip" :
+                       comp_type == COMPRESS_ZLIB ? "zlib" :
+                       comp_type == COMPRESS_LZ4 ? "lz4" : "unknown");
+            } else {
+                printf("압축: 없음\n");
+            }
+        }
+    }
+    
+    return SUCCESS;
+}
+
+int verify_backup(const char *backup_path, const backup_options_t *opts) {
+    printf("백업 검증 중: %s\n", backup_path);
+    
+    if (!file_exists(backup_path)) {
+        printf("오류: 백업 파일이 존재하지 않습니다: %s\n", backup_path);
+        return ERROR_FILE_NOT_FOUND;
+    }
+    
+    if (is_directory(backup_path)) {
+        // 디렉토리 백업 검증
+        printf("\n=== 디렉토리 백업 검증 ===\n");
+        
+        DIR *dir = opendir(backup_path);
+        if (!dir) {
+            printf("오류: 디렉토리를 열 수 없습니다: %s\n", backup_path);
+            return ERROR_FILE_OPEN;
+        }
+        
+        struct dirent *entry;
+        int file_count = 0, dir_count = 0, issues = 0;
+        size_t total_size = 0;
+        
+        while ((entry = readdir(dir)) != NULL) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
+            }
+            
+            char full_path[MAX_PATH];
+            snprintf(full_path, sizeof(full_path), "%s/%s", backup_path, entry->d_name);
+            
+            struct stat st;
+            if (stat(full_path, &st) != 0) {
+                printf("❌ 파일 정보 읽기 실패: %s\n", entry->d_name);
+                issues++;
+                continue;
+            }
+            
+            if (S_ISDIR(st.st_mode)) {
+                printf("📁 %s/ (디렉토리)\n", entry->d_name);
+                dir_count++;
+                
+                // 재귀적으로 하위 디렉토리 검증
+                int sub_result = verify_backup(full_path, opts);
+                if (sub_result != SUCCESS) {
+                    issues++;
+                }
+            } else if (S_ISREG(st.st_mode)) {
+                // 압축 파일 검증
+                compression_type_t comp_type = get_compression_type(entry->d_name);
+                if (comp_type != COMPRESS_NONE) {
+                    printf("📦 %s (%ld bytes, %s)\n", entry->d_name, st.st_size,
+                           comp_type == COMPRESS_GZIP ? "gzip" :
+                           comp_type == COMPRESS_ZLIB ? "zlib" :
+                           comp_type == COMPRESS_LZ4 ? "lz4" : "unknown");
+                } else {
+                    printf("📄 %s (%ld bytes)\n", entry->d_name, st.st_size);
+                }
+                
+                file_count++;
+                total_size += st.st_size;
+                
+                // 파일 읽기 테스트
+                FILE *test_file = fopen(full_path, "rb");
+                if (!test_file) {
+                    printf("❌ 파일 읽기 실패: %s\n", entry->d_name);
+                    issues++;
+                } else {
+                    fclose(test_file);
+                }
+            }
+        }
+        closedir(dir);
+        
+        printf("\n검증 결과:\n");
+        printf("- 파일: %d개\n", file_count);
+        printf("- 디렉토리: %d개\n", dir_count);
+        printf("- 총 크기: %zu bytes\n", total_size);
+        printf("- 문제: %d개\n", issues);
+        
+        if (issues == 0) {
+            printf("✅ 디렉토리 백업 검증 성공!\n");
+            return SUCCESS;
+        } else {
+            printf("❌ 디렉토리 백업에 문제가 발견되었습니다.\n");
+            return ERROR_GENERAL;
+        }
+        
+    } else {
+        // 단일 파일 백업 검증
+        printf("\n=== 파일 백업 검증 ===\n");
+        
+        struct stat st;
+        if (stat(backup_path, &st) == 0) {
+            printf("파일명: %s\n", backup_path);
+            printf("크기: %ld bytes\n", st.st_size);
+            printf("수정 시간: %s", ctime(&st.st_mtime));
+            
+            // 압축 파일인지 확인
+            compression_type_t comp_type = get_compression_type(backup_path);
+            if (comp_type != COMPRESS_NONE) {
+                printf("압축 형식: %s\n", 
+                       comp_type == COMPRESS_GZIP ? "gzip" :
+                       comp_type == COMPRESS_ZLIB ? "zlib" :
+                       comp_type == COMPRESS_LZ4 ? "lz4" : "unknown");
+            }
+            
+            // 파일 읽기 테스트
+            FILE *test_file = fopen(backup_path, "rb");
+            if (!test_file) {
+                printf("❌ 파일 읽기 실패\n");
+                return ERROR_FILE_READ;
+            }
+            fclose(test_file);
+            
+            printf("✅ 파일 백업 검증 완료\n");
+            return SUCCESS;
+        }
+    }
+    
+    return ERROR_GENERAL;
+}
+
+int handle_file_conflict(const char *dest_path, conflict_mode_t mode) {
+    switch(mode) {
+        case CONFLICT_OVERWRITE:
+            return 1; // 덮어쓰기
+        case CONFLICT_SKIP:
+            printf("파일 건너뜀: %s\n", dest_path);
+            return 0; // 건너뛰기
+        case CONFLICT_RENAME:
+            // TODO: 파일명 변경 로직 구현
+            return 1;
+        case CONFLICT_ASK:
+            printf("파일이 존재합니다: %s\n", dest_path);
+            printf("덮어쓰시겠습니까? (y/n): ");
+            char response;
+            if (scanf(" %c", &response) == 1) {
+                return (response == 'y' || response == 'Y') ? 1 : 0;
+            }
+            return 0;
+        default:
+            return 0;
+    }
+}
+
 void print_usage(const char *prog) {
     printf("고급 파일 백업 유틸리티 v%s\n", VERSION);
     printf("빌드: %s\n\n", BUILD_DATE);
@@ -21,7 +248,7 @@ void print_usage(const char *prog) {
     printf("  -r, --recursive             재귀적 처리\n");
     printf("  -v, --verbose               상세 출력\n");
     printf("  -p, --progress              진행률 표시\n");
-    printf("  -c, --compression=TYPE      압축 (none, gzip, zlib)\n");
+    printf("  -c, --compression=TYPE      압축 (none, gzip, zlib, lz4)\n");
     printf("  -m, --mode=MODE             백업 모드 (full, incremental, differential)\n");
     printf("  -x, --exclude=PATTERN       제외 패턴\n");
     printf("  -j, --jobs=N                병렬 처리 스레드 수 (기본: %d)\n", MAX_THREADS);
@@ -47,7 +274,7 @@ void print_version(void) {
     printf("빌드 날짜: %s\n", BUILD_DATE);
     printf("컴파일러: GCC %s\n", __VERSION__);
     printf("최대 병렬 스레드: %d\n", MAX_THREADS);
-    printf("지원 압축: gzip, zlib\n");
+    printf("지원 압축: gzip, zlib, lz4\n");
     printf("버퍼 크기: %d bytes\n", BUFFER_SIZE);
 }
 
@@ -55,6 +282,7 @@ compression_type_t parse_compression_type(const char *str) {
     if (!str || strcmp(str, "none") == 0) return COMPRESS_NONE;
     if (strcmp(str, "gzip") == 0) return COMPRESS_GZIP;
     if (strcmp(str, "zlib") == 0) return COMPRESS_ZLIB;
+    if (strcmp(str, "lz4") == 0) return COMPRESS_LZ4;
     return COMPRESS_NONE;
 }
 
@@ -260,8 +488,7 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     
-    // ⭐ 수정: command(argv[1]) 다음부터 전달
-    if (parse_options(argc - 2, argv + 2, &g_options) != 0) {
+    if (parse_options(argc - 1, argv + 1, &g_options) != 0) {
         return 1;
     }
     
@@ -288,23 +515,23 @@ int main(int argc, char *argv[]) {
     
     // 명령어별 처리
     if (strcmp(command, "backup") == 0) {
-        // ⭐ 수정: optind는 argv+2 기준이므로 +2 필요
-        int remaining_args = argc - optind - 2;
+        // 인수 개수 확인
+        int remaining_args = argc - optind - 1;
         if (remaining_args < 2) {
             printf("사용법: %s backup [옵션] <소스> <대상>\n", argv[0]);
             return 1;
         }
         
-        // ⭐ 수정: argv+2 기준 optind이므로 실제로는 +2 필요
-        source = argv[optind + 2];
-        dest = argv[optind + 3];
+        // 소스와 대상 경로 설정
+        source = argv[optind + 1];
+        dest = argv[optind + 2];
         
         // 디버그 정보 (verbose 모드에서만)
         if (g_options.verbose) {
             printf("백업 작업: %s -> %s\n", source, dest);
         }
         
-        // ⭐ 수정: 정상적인 로그 기록 (한 번만)
+        // 로그 기록
         log_info("백업 시작: %s -> %s", source, dest);
         
         // 소스 파일/디렉토리 존재 확인
@@ -318,7 +545,7 @@ int main(int argc, char *argv[]) {
                     printf("오류: 디렉토리 백업에는 -r 옵션이 필요합니다.\n");
                     result = ERROR_GENERAL;
                 } else {
-                    result = backup_directory(source, dest, &g_options);
+                    result = backup_directory_recursive(source, dest, &g_options);
                 }
             } else {
                 result = backup_file(source, dest, &g_options);
@@ -332,14 +559,13 @@ int main(int argc, char *argv[]) {
         }
         
     } else if (strcmp(command, "restore") == 0) {
-        int remaining_args = argc - optind - 2;
-        if (remaining_args < 2) {
+        if (argc < 4) {
             printf("사용법: %s restore [옵션] <소스> <대상>\n", argv[0]);
             return 1;
         }
         
-        source = argv[optind + 2];
-        dest = argv[optind + 3];
+        source = argv[argc - 2];
+        dest = argv[argc - 1];
         
         log_info("복원 시작: %s -> %s", source, dest);
         
@@ -352,7 +578,7 @@ int main(int argc, char *argv[]) {
                     printf("오류: 디렉토리 복원에는 -r 옵션이 필요합니다.\n");
                     result = ERROR_GENERAL;
                 } else {
-                    result = restore_directory(source, dest, &g_options);
+                    result = restore_directory_recursive(source, dest, &g_options);
                 }
             } else {
                 result = restore_file(source, dest, &g_options);
@@ -360,23 +586,21 @@ int main(int argc, char *argv[]) {
         }
         
     } else if (strcmp(command, "verify") == 0) {
-        int remaining_args = argc - optind - 2;
-        if (remaining_args < 1) {
+        if (argc < 3) {
             printf("사용법: %s verify [옵션] <백업경로>\n", argv[0]);
             return 1;
         }
         
-        source = argv[optind + 2];
+        source = argv[argc - 1];
         result = verify_backup(source, &g_options);
         
     } else if (strcmp(command, "list") == 0) {
-        int remaining_args = argc - optind - 2;
-        if (remaining_args < 1) {
+        if (argc < 3) {
             printf("사용법: %s list [옵션] <백업경로>\n", argv[0]);
             return 1;
         }
         
-        source = argv[optind + 2];
+        source = argv[argc - 1];
         result = list_backup_contents(source, &g_options);
         
     } else {
