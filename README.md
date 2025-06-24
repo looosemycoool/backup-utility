@@ -10,7 +10,6 @@
 ## 📋 목차
 
 - [✨ 주요 기능](#-주요-기능)
-- [🚀 빠른 시작](#-빠른-시작)
 - [📦 설치](#-설치)
 - [💻 사용법](#-사용법)
 - [🔧 고급 기능](#-고급-기능)
@@ -39,28 +38,6 @@
 - **⏰ 메타데이터 보존**: 권한, 시간 정보 유지
 - **🎨 사용자 친화적**: 컬러 출력 및 직관적 인터페이스
 
-## 🚀 빠른 시작
-
-### 5분 만에 시작하기
-
-```bash
-# 1. 프로젝트 클론
-git clone https://github.com/your-username/backup-utility.git
-cd backup-utility
-
-# 2. 빌드
-make
-
-# 3. 간단한 테스트
-echo "Hello, World!" > test.txt
-./bin/backup backup --conflict=overwrite test.txt backup.txt
-./bin/backup restore backup.txt restored.txt
-diff test.txt restored.txt  # 결과 없으면 성공!
-
-# 4. 압축 백업 테스트
-./bin/backup backup --conflict=overwrite --compression=gzip test.txt compressed.txt
-ls -la compressed.txt.gz  # 압축된 파일 확인
-```
 
 ### 헬퍼 스크립트 사용 (권장)
 
