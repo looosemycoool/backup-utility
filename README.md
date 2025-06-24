@@ -214,12 +214,6 @@ backup version
 ```bash
 # 전체 백업 (기본값)
 ./bin/backup backup --conflict=overwrite -m full source/ backup/
-
-# 증분 백업 (변경된 파일만)
-./bin/backup backup --conflict=overwrite -m incremental source/ backup/
-
-# 차등 백업 (마지막 전체 백업 이후 변경된 파일)
-./bin/backup backup --conflict=overwrite -m differential source/ backup/
 ```
 
 ### ⚡ 병렬 처리
