@@ -39,32 +39,6 @@
 - **🎨 사용자 친화적**: 컬러 출력 및 직관적 인터페이스
 
 
-### 헬퍼 스크립트 사용 (권장)
-
-```bash
-# 헬퍼 스크립트 생성
-cat > backup_helper.sh << 'EOF'
-#!/bin/bash
-if [ "$1" = "backup" ]; then
-    ./bin/backup backup --conflict=overwrite "$2" "$3"
-elif [ "$1" = "backup-gzip" ]; then
-    ./bin/backup backup --conflict=overwrite --compression=gzip "$2" "$3"
-elif [ "$1" = "restore" ]; then
-    if [[ "$2" == *.gz ]]; then
-        gunzip -c "$2" > "$3"
-    else
-        cp "$2" "$3"
-    fi
-fi
-EOF
-
-chmod +x backup_helper.sh
-
-# 사용 예시
-./backup_helper.sh backup test.txt backup.txt
-./backup_helper.sh backup-gzip test.txt compressed.txt
-./backup_helper.sh restore compressed.txt.gz restored.txt
-```
 
 ## 📦 설치
 
